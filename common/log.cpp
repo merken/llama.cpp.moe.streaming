@@ -173,6 +173,7 @@ struct common_log {
         file       = nullptr;
         prefix     = false;
         timestamps = false;
+        jsonl      = false;
         running    = false;
         t_start    = t_us();
 
@@ -200,6 +201,7 @@ private:
 
     bool prefix;
     bool timestamps;
+    bool jsonl;
     bool running;
 
     int64_t t_start;
@@ -440,6 +442,12 @@ public:
 
         this->timestamps = timestamps;
     }
+
+    void set_jsonl(bool jsonl) {
+        std::lock_guard<std::mutex> lock(mtx);
+
+        this->jsonl = jsonl;
+    }
 };
 
 //
@@ -519,6 +527,10 @@ void common_log_set_prefix(struct common_log * log, bool prefix) {
 
 void common_log_set_timestamps(struct common_log * log, bool timestamps) {
     log->set_timestamps(timestamps);
+}
+
+void common_log_set_jsonl(struct common_log * log, bool jsonl) {
+    log->set_jsonl(jsonl);
 }
 
 void common_log_flush(struct common_log * log) {

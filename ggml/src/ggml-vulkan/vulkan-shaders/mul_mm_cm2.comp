@@ -322,10 +322,6 @@ void load_row_ids_hoisted(uint expert_idx, uint ic) {
 }
 #endif
 
-#ifdef MULMAT_QUANT
-#include "iq_shmem_init.glsl"
-#endif
-
 void main() {
     const uint tid = gl_LocalInvocationIndex;
     const uint ic = gl_WorkGroupID.y;

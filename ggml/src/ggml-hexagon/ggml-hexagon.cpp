@@ -2616,6 +2616,9 @@ struct ggml_hexagon_opqueue {
     size_t                      shm_blk_size;
     size_t                      depth;
 
+    uint64_t req_seq = 0;
+    uint64_t rsp_seq = 0;
+
     using opvec = std::vector<htp_opnode>;
 
     std::vector<opvec>          op_cache;       // per batch op cache
@@ -2671,6 +2674,7 @@ struct ggml_hexagon_opqueue {
         req.n_bufs    = op_batch->n_bufs;
         req.n_tensors = op_batch->n_tens;
         req.n_ops     = op_batch->n_ops;
+        req.seq       = ++req_seq;
 
         op_cache[slot]   = op_batch->ops;
         start_usec[slot] = ggml_time_us();
@@ -2700,6 +2704,8 @@ struct ggml_hexagon_opqueue {
         uint8_t * b_ptr = m_ptr; m_ptr += b_size;
         uint8_t * t_ptr = m_ptr; m_ptr += t_size;
         uint8_t * o_ptr = m_ptr;
+
+        op_batch->sort_buffers();
 
         memcpy(b_ptr, (void *) op_batch->h_bufs.data(), b_size);
         memcpy(t_ptr, (void *) op_batch->h_tens.data(), t_size);
@@ -2901,6 +2907,12 @@ void ggml_hexagon_session::flush_batch(size_t min_ops) {
     }
 
     op_batch->reset();
+}
+
+void ggml_hexagon_session::flush(bool all) {
+    flush_sync_peers();
+    flush_batch();
+    flush_pending(all);
 }
 
 void ggml_hexagon_session::enqueue_op(const htp_opnode & node) {
@@ -3532,6 +3544,8 @@ void ggml_hexagon_session::release() noexcept(true) {
     if (this->valid_handle) {
         htp_iface_close(this->handle);
     }
+
+    this->cloned_buffers.clear();
 }
 
 ggml_hexagon_session::ggml_hexagon_session(const ggml_hexagon_device_config & config, ggml_backend_dev_t dev, uint32_t mdev_idx, uint32_t mdev_count) noexcept(false) {
@@ -3556,6 +3570,8 @@ ggml_hexagon_session::ggml_hexagon_session(const ggml_hexagon_device_config & co
         release();
         throw;
     }
+
+    GGML_UNUSED(dev);
 }
 
 ggml_hexagon_session::~ggml_hexagon_session() noexcept(true) {
@@ -4398,6 +4414,20 @@ static void ggml_hexagon_precompute_rope_params(
         kparams->div_ne2_ne1 = init_fastdiv_values(dst->ne[2] * dst->ne[1]);
         kparams->div_ne1     = init_fastdiv_values(dst->ne[1]);
     }
+
+    kparams->chunks_per_row = chunks_per_row;
+    kparams->chunk_size = chunk_size;
+    kparams->total_tasks = total_tasks;
+
+    kparams->div_ne10 = init_fastdiv_values(ne10);
+    kparams->div_ne10_ne11 = init_fastdiv_values(ne10 * ne11);
+    kparams->div_chunks_per_row = init_fastdiv_values(chunks_per_row);
+    kparams->div_ne02 = init_fastdiv_values(ne02);
+    kparams->div_ne03 = init_fastdiv_values(ne03);
+
+    struct htp_get_rows_vtcm_layout vtcm_layout;
+    htp_get_rows_vtcm_layout_build(&vtcm_layout, src0->type, ne00, kparams->n_threads);
+    kparams->vtcm_size = vtcm_layout.total_bytes;
 }
 
 static void ggml_hexagon_precompute_fused_mmnx_params(
@@ -5542,6 +5572,106 @@ static void ggml_backend_hexagon_synchronize(ggml_backend_t backend) {
     if (sess->last_error > HTP_STATUS_OK) {
         GGML_ABORT("ggml-hex: %s synchronize failed : dsp-error %s\n", sess->c_name(), status_to_str(sess->last_error));
     }
+}
+
+enum ggml_hexagon_mem_range_type {
+    HEXAGON_MEM_RANGE_TYPE_SRC,
+    HEXAGON_MEM_RANGE_TYPE_DST,
+};
+
+struct ggml_hexagon_mem_range {
+    uint64_t pb;
+    uint64_t p0;
+    uint64_t p1;
+    ggml_hexagon_mem_range_type pt;
+};
+
+struct ggml_hexagon_mem_ranges {
+    std::vector<ggml_hexagon_mem_range> ranges;
+
+    void reset() {
+        ranges.clear();
+    }
+
+    void add(const ggml_hexagon_mem_range & mr) {
+        ranges.push_back(mr);
+    }
+
+    bool check(const ggml_hexagon_mem_range & mr) const {
+        for (const auto & cmp : ranges) {
+            if (mr.pb != cmp.pb) {
+                continue;
+            }
+            if (mr.pt == HEXAGON_MEM_RANGE_TYPE_SRC && cmp.pt == HEXAGON_MEM_RANGE_TYPE_SRC) {
+                continue;
+            }
+            if (mr.p0 < cmp.p1 && mr.p1 > cmp.p0) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+static ggml_hexagon_mem_range ggml_hexagon_mem_range_from_tensor(const ggml_tensor * tensor, ggml_hexagon_mem_range_type pt) {
+    const ggml_tensor * base = tensor->view_src ? tensor->view_src : tensor;
+    ggml_hexagon_mem_range mr;
+    if (tensor->buffer) {
+        mr = {
+            /*.pb =*/ (uint64_t) tensor->buffer,
+            /*.p0 =*/ (uint64_t) tensor->data,
+            /*.p1 =*/ (uint64_t) tensor->data + ggml_backend_buft_get_alloc_size(tensor->buffer->buft, tensor),
+            /*.pt =*/ pt,
+        };
+    } else {
+        mr = {
+            /*.pb =*/ (uint64_t) base,
+            /*.p0 =*/ 0,
+            /*.p1 =*/ 1024,
+            /*.pt =*/ pt,
+        };
+    }
+    return mr;
+}
+
+static void ggml_hexagon_mem_ranges_add_node(ggml_hexagon_mem_ranges & mrs, const htp_opnode & node) {
+    if (node.is_empty()) return;
+
+    for (int i = 0; i < GGML_MAX_SRC; i++) {
+        if (node.node->src[i]) {
+            mrs.add(ggml_hexagon_mem_range_from_tensor(node.node->src[i], HEXAGON_MEM_RANGE_TYPE_SRC));
+        }
+    }
+    for (const auto * fused : node.fused) {
+        for (int i = 0; i < GGML_MAX_SRC; i++) {
+            if (fused->src[i]) {
+                mrs.add(ggml_hexagon_mem_range_from_tensor(fused->src[i], HEXAGON_MEM_RANGE_TYPE_SRC));
+            }
+        }
+    }
+    mrs.add(ggml_hexagon_mem_range_from_tensor(node.dst(), HEXAGON_MEM_RANGE_TYPE_DST));
+}
+
+static bool ggml_hexagon_mem_ranges_check_node(const ggml_hexagon_mem_ranges & mrs, const htp_opnode & node) {
+    if (node.is_empty()) return true;
+
+    for (int i = 0; i < GGML_MAX_SRC; i++) {
+        if (node.node->src[i]) {
+            if (!mrs.check(ggml_hexagon_mem_range_from_tensor(node.node->src[i], HEXAGON_MEM_RANGE_TYPE_SRC))) {
+                return false;
+            }
+        }
+    }
+    for (const auto * fused : node.fused) {
+        for (int i = 0; i < GGML_MAX_SRC; i++) {
+            if (fused->src[i]) {
+                if (!mrs.check(ggml_hexagon_mem_range_from_tensor(fused->src[i], HEXAGON_MEM_RANGE_TYPE_SRC))) {
+                    return false;
+                }
+            }
+        }
+    }
+    return mrs.check(ggml_hexagon_mem_range_from_tensor(node.dst(), HEXAGON_MEM_RANGE_TYPE_DST));
 }
 
 enum ggml_hexagon_mem_range_type {

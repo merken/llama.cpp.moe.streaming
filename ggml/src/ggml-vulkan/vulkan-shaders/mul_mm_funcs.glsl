@@ -20,58 +20,338 @@ void store_a(uint m, uint k_pair, FLOAT_TYPEV2 value) {
 void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uint idx_m, const uint block, const uint end_k) {
 #if defined(DATA_A_F32) || defined(DATA_A_F16)
 #if LOAD_VEC_A == 8
-    if (ALIGNED != 0) {
-        const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-        const uint k_pair = row * LOAD_VEC_A / 2;
-        FLOAT_TYPEV8 aa = FLOAT_TYPEV8(data_a[idx]);
-        store_a(col, k_pair,     aa[0].xy);
-        store_a(col, k_pair + 1, aa[0].zw);
-        store_a(col, k_pair + 2, aa[1].xy);
-        store_a(col, k_pair + 3, aa[1].zw);
-        return;
-    }
+            if (ALIGNED != 0) {
+                const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+                const uint k_pair = row * LOAD_VEC_A / 2;
+                FLOAT_TYPEV8 aa = FLOAT_TYPEV8(data_a[idx]);
+                store_a(col, k_pair,     aa[0].xy);
+                store_a(col, k_pair + 1, aa[0].zw);
+                store_a(col, k_pair + 2, aa[1].xy);
+                store_a(col, k_pair + 3, aa[1].zw);
+                return;
+            }
 #elif LOAD_VEC_A == 4
-    if (ALIGNED != 0) {
-        const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-        const uint k_pair = row * LOAD_VEC_A / 2;
-        FLOAT_TYPEV4 aa = FLOAT_TYPEV4(data_a[idx]);
-        store_a(col, k_pair,     aa.xy);
-        store_a(col, k_pair + 1, aa.zw);
-        return;
-    }
+            if (ALIGNED != 0) {
+                const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+                const uint k_pair = row * LOAD_VEC_A / 2;
+                FLOAT_TYPEV4 aa = FLOAT_TYPEV4(data_a[idx]);
+                store_a(col, k_pair,     aa.xy);
+                store_a(col, k_pair + 1, aa.zw);
+                return;
+            }
 #endif
-    const uint idx = pos_a + col * p.stride_a + row * 2;
-    if (idx_m < p.M && block + row * 2 + 1 < end_k) {
-        store_a(col, row, FLOAT_TYPEV2(data_a_scalar[idx],
-                                       data_a_scalar[idx + 1]));
-    } else if (idx_m < p.M && block + row * 2 < end_k) {
-        store_a(col, row, FLOAT_TYPEV2(data_a_scalar[idx], 0.0f));
-    } else {
-        store_a(col, row, FLOAT_TYPEV2(0.0f));
-    }
+            const uint idx = pos_a + col * p.stride_a + row * 2;
+            if (idx_m < p.M && block + row * 2 + 1 < end_k) {
+                store_a(col, row, FLOAT_TYPEV2(data_a_scalar[idx],
+                                               data_a_scalar[idx + 1]));
+            } else if (idx_m < p.M && block + row * 2 < end_k) {
+                store_a(col, row, FLOAT_TYPEV2(data_a_scalar[idx], 0.0f));
+            } else {
+                store_a(col, row, FLOAT_TYPEV2(0.0f));
+            }
 #elif defined(DATA_A_BF16)
 #if LOAD_VEC_A == 4
-    if (ALIGNED != 0) {
-        const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-        const uint k_pair = row * LOAD_VEC_A / 2;
-        FLOAT_TYPEV4 aa = FLOAT_TYPEV4(TO_FLOAT_TYPE(data_a[idx]));
-        store_a(col, k_pair,     aa.xy);
-        store_a(col, k_pair + 1, aa.zw);
-        return;
-    }
+            if (ALIGNED != 0) {
+                const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+                const uint k_pair = row * LOAD_VEC_A / 2;
+                FLOAT_TYPEV4 aa = FLOAT_TYPEV4(TO_FLOAT_TYPE(data_a[idx]));
+                store_a(col, k_pair,     aa.xy);
+                store_a(col, k_pair + 1, aa.zw);
+                return;
+            }
 #endif
-    const uint idx = pos_a + col * p.stride_a + row * 2;
-    if (idx_m < p.M && block + row * 2 + 1 < end_k) {
-        store_a(col, row, FLOAT_TYPEV2(TO_FLOAT_TYPE(data_a_scalar[idx]),
-                                       TO_FLOAT_TYPE(data_a_scalar[idx + 1])));
-    } else if (idx_m < p.M && block + row * 2 < end_k) {
-        store_a(col, row, FLOAT_TYPEV2(TO_FLOAT_TYPE(data_a_scalar[idx]), 0.0f));
-    } else {
-        store_a(col, row, FLOAT_TYPEV2(0.0f));
-    }
+            const uint idx = pos_a + col * p.stride_a + row * 2;
+            if (idx_m < p.M && block + row * 2 + 1 < end_k) {
+                store_a(col, row, FLOAT_TYPEV2(TO_FLOAT_TYPE(data_a_scalar[idx]),
+                                               TO_FLOAT_TYPE(data_a_scalar[idx + 1])));
+            } else if (idx_m < p.M && block + row * 2 < end_k) {
+                store_a(col, row, FLOAT_TYPEV2(TO_FLOAT_TYPE(data_a_scalar[idx]), 0.0f));
+            } else {
+                store_a(col, row, FLOAT_TYPEV2(0.0f));
+            }
+#elif defined(DATA_A_Q4_0)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 4;
+            const uint iqs = idx & 0x03;
+
+            const float d = float(data_a_packed16[ib].d);
+            const uint vui = uint(data_a_packed16[ib].qs[2*iqs]) | (uint(data_a_packed16[ib].qs[2*iqs + 1]) << 16);
+            const vec4 v0 = (vec4(unpack8(vui & 0x0F0F0F0F)) - 8.0f) * d;
+            const vec4 v1 = (vec4(unpack8((vui >> 4) & 0x0F0F0F0F)) - 8.0f) * d;
+
+            const uint k_pair = row * LOAD_VEC_A / 4;
+            store_a(col, k_pair,     FLOAT_TYPEV2(v0.xy));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2(v0.zw));
+            store_a(col, k_pair + 8, FLOAT_TYPEV2(v1.xy));
+            store_a(col, k_pair + 9, FLOAT_TYPEV2(v1.zw));
+#elif defined(DATA_A_Q4_1)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 4;
+            const uint iqs = idx & 0x03;
+
+            const vec2 dm = vec2(data_a_packed32[ib].dm);
+            const uint vui = data_a_packed32[ib].qs[iqs];
+            const vec4 v0 = vec4(unpack8(vui & 0x0F0F0F0F)) * dm.x + dm.y;
+            const vec4 v1 = vec4(unpack8((vui >> 4) & 0x0F0F0F0F)) * dm.x + dm.y;
+
+            const uint k_pair = row * LOAD_VEC_A / 4;
+            store_a(col, k_pair,     FLOAT_TYPEV2(v0.xy));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2(v0.zw));
+            store_a(col, k_pair + 8, FLOAT_TYPEV2(v1.xy));
+            store_a(col, k_pair + 9, FLOAT_TYPEV2(v1.zw));
+#elif defined(DATA_A_Q5_0)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 8;
+            const uint iqs = idx & 0x07;
+
+            const float d = float(data_a_packed16[ib].d);
+            const uint uint_qh = uint(data_a_packed16[ib].qh[1]) << 16 | uint(data_a_packed16[ib].qh[0]);
+            const ivec2 qh0 = ivec2(((uint_qh >> 2*iqs) << 4) & 0x10, (uint_qh >> (2*iqs + 12)) & 0x10);
+            const ivec2 qh1 = ivec2(((uint_qh >> (2*iqs + 1)) << 4) & 0x10, (uint_qh >> (2*iqs + 13)) & 0x10);
+
+            const uint vui = uint(data_a_packed16[ib].qs[iqs]);
+            const vec4 v = (vec4((vui & 0xF) | qh0.x, ((vui >> 4) & 0xF) | qh0.y, ((vui >> 8) & 0xF) | qh1.x, (vui >> 12) | qh1.y) - 16.0f) * d;
+            store_a(col, row,     FLOAT_TYPEV2(v.xz));
+            store_a(col, row + 8, FLOAT_TYPEV2(v.yw));
+#elif defined(DATA_A_Q5_1)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 4;
+            const uint iqs = idx & 0x03;
+
+            const vec2 dm = vec2(data_a_packed32[ib].dm);
+            const uint uint_qh = data_a_packed32[ib].qh;
+            const uvec2 qh0 = uvec2(((uint_qh >> 4*iqs) << 4) & 0x10, (uint_qh >> (4*iqs + 12)) & 0x10);
+            const uvec2 qh1 = uvec2(((uint_qh >> (4*iqs + 1)) << 4) & 0x10, (uint_qh >> (4*iqs + 13)) & 0x10);
+            const uvec2 qh2 = uvec2(((uint_qh >> (4*iqs + 2)) << 4) & 0x10, (uint_qh >> (4*iqs + 14)) & 0x10);
+            const uvec2 qh3 = uvec2(((uint_qh >> (4*iqs + 3)) << 4) & 0x10, (uint_qh >> (4*iqs + 15)) & 0x10);
+
+            const uint vui = data_a_packed32[ib].qs[iqs];
+            const vec4 v0 = vec4((vui & 0xF) | qh0.x, ((vui >> 4) & 0xF) | qh0.y, ((vui >> 8) & 0xF) | qh1.x, ((vui >> 12) & 0xF) | qh1.y) * dm.x + dm.y;
+            const vec4 v1 = vec4(((vui >> 16) & 0xF) | qh2.x, ((vui >> 20) & 0xF) | qh2.y, ((vui >> 24) & 0xF) | qh3.x, ((vui >> 28) & 0xF) | qh3.y) * dm.x + dm.y;
+
+            const uint k_pair = row * LOAD_VEC_A / 4;
+            store_a(col, k_pair,     FLOAT_TYPEV2(v0.xz));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2(v1.xz));
+            store_a(col, k_pair + 8, FLOAT_TYPEV2(v0.yw));
+            store_a(col, k_pair + 9, FLOAT_TYPEV2(v1.yw));
+#elif defined(DATA_A_Q8_0)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 8;
+            const uint iqs = idx & 0x07;
+
+            const float d = float(data_a_packed16[ib].d);
+            const i8vec2 v0 = unpack8(int32_t(data_a_packed16[ib].qs[2*iqs])).xy; // vec4 used due to #12147
+            const i8vec2 v1 = unpack8(int32_t(data_a_packed16[ib].qs[2*iqs + 1])).xy;
+            const vec4 v = vec4(v0.x, v0.y, v1.x, v1.y) * d;
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     FLOAT_TYPEV2(v.xy));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2(v.zw));
+#elif defined(DATA_A_Q1_0)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 16;
+            const uint iqs = idx & 0xfu;
+
+            const float d = float(data_a[ib].d);
+            const uint bits = uint(data_a[ib].qs[iqs]);
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     FLOAT_TYPEV2((bits & 0x01u) != 0u ? d : -d, (bits & 0x02u) != 0u ? d : -d));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2((bits & 0x04u) != 0u ? d : -d, (bits & 0x08u) != 0u ? d : -d));
+            store_a(col, k_pair + 2, FLOAT_TYPEV2((bits & 0x10u) != 0u ? d : -d, (bits & 0x20u) != 0u ? d : -d));
+            store_a(col, k_pair + 3, FLOAT_TYPEV2((bits & 0x40u) != 0u ? d : -d, (bits & 0x80u) != 0u ? d : -d));
+#elif defined(DATA_A_Q2_0)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 16;
+            const uint iqs = idx & 0xfu;
+
+            const FLOAT_TYPE d = FLOAT_TYPE(data_a[ib].d);
+            const uint bits = uint(data_a[ib].qs[iqs]);
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     d * (FLOAT_TYPEV2(bits & 3u, (bits >> 2u) & 3u) - FLOAT_TYPEV2(1.0f)));
+            store_a(col, k_pair + 1, d * (FLOAT_TYPEV2((bits >> 4u) & 3u, bits >> 6u) - FLOAT_TYPEV2(1.0f)));
+#elif defined(DATA_A_Q2_K)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 64;                          // 4 values per idx
+            const uint iqs = (idx % 64) * 2;                   // 0,2,4..126
+
+            const uint qsi = (iqs / 64) * 16 + (iqs % 16);     // 0..15
+            const uint scalesi = iqs / 8;                      // 0..15
+            const uint qsshift = ((iqs % 64) / 16) * 2;        // 0,2,4,6
+
+            const vec4 qs = vec4(unpack8((data_a_packed32[ib].qs[qsi / 2] >> qsshift) & 0x03030303));
+            const uint scales = data_a[ib].scales[scalesi];
+            const vec2 dm = vec2(data_a[ib].dm);
+
+            const vec4 v = dm.x * float(scales & 0xF) * qs - dm.y * float(scales >> 4);
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     FLOAT_TYPEV2(v.xy));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2(v.zw));
+#elif defined(DATA_A_TQ1_0)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib  = idx / 128;               // 2 values per idx
+            const uint iqs = (idx % 128) * 2;         // element 0,2,4..254
+
+            const float d = float(data_a[ib].d);
+            vec2 v;
+            for (uint kk = 0u; kk < 2u; ++kk) {
+                const uint e = iqs + kk;
+                const uint bidx = tq1_0_byte_of(e);
+                const uint qbyte = uint(bidx < 48u ? data_a[ib].qs[bidx]
+                                                   : data_a[ib].qh[bidx - 48u]);
+                v[kk] = d * (float(tq1_0_trit(qbyte, tq1_0_digit_of(e))) - 1.0);
+            }
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair, FLOAT_TYPEV2(v.xy));
+#elif defined(DATA_A_TQ2_0)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 128;                         // 2 values per idx
+            const uint iqs = (idx % 128) * 2;                  // elem 0,2,4..254
+
+            const uint qsi   = (iqs / 128) * 32 + (iqs % 32);  // byte pair start
+            const uint shift = 2 * ((iqs % 128) / 32);         // 0,2,4,6
+
+            const uvec2 qs = uvec2(data_a[ib].qs[qsi], data_a[ib].qs[qsi + 1]);
+            const float d = float(data_a[ib].d);
+
+            const vec2 v = d * (vec2((qs >> shift) & 3) - 1.0);
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair, FLOAT_TYPEV2(v.xy));
+#elif defined(DATA_A_Q3_K)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 128;                   // 2 values per idx
+            const uint iqs = idx % 128;                  // 0..127
+
+            const uint n = iqs / 64;                     // 0,1
+            const uint qsi = n * 32 + (iqs % 16) * 2;    // 0,2,4..62
+            const uint hmi =          (iqs % 16) * 2;    // 0,2,4..30
+            const uint j = (iqs % 64) / 4;               // 0..3
+            const uint is = iqs / 8;                     // 0..15
+            const uint halfsplit = ((iqs % 64) / 16);    // 0,1,2,3
+            const uint qsshift = halfsplit * 2;          // 0,2,4,6
+
+            const int8_t us = int8_t(((data_a[ib].scales[is % 8] >> (4 * int(is / 8))) & 0xF)
+                                  | (((data_a[ib].scales[8 + (is % 4)] >> (2 * int(is / 4))) & 3) << 4));
+            const float dl = float(data_a[ib].d) * float(us - 32);
+
+            const vec2 qs = vec2(unpack8((uint(data_a_packed16[ib].qs[qsi / 2]) >> qsshift) & 0x0303).xy);
+            const vec2 hm = vec2(unpack8(((uint(data_a_packed16[ib].hmask[hmi / 2]) >> (4 * n + halfsplit)) & 0x0101 ^ 0x0101) << 2).xy);
+
+            store_a(col, row * LOAD_VEC_A / 2, FLOAT_TYPEV2(dl * (qs.x - hm.x),
+                                                              dl * (qs.y - hm.y)));
+#elif defined(DATA_A_Q4_K)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 64;                  // 4 values per idx
+            const uint iqs = (idx % 64) * 2;           // 0,2,4..126
+
+            const uint n = iqs / 32;                   // 0,1,2,3
+            const uint b = (iqs % 32) / 16;            // 0,1
+            const uint is = 2 * n + b;                 // 0..7
+            const uint qsi = n * 32 + (iqs % 16) * 2;  // 0,2,4..126
+
+            const vec2 loadd = vec2(data_a[ib].dm);
+
+            const uvec3 scales = uvec3(data_a_packed32[ib].scales[0],
+                                       data_a_packed32[ib].scales[1],
+                                       data_a_packed32[ib].scales[2]);
+            const uint scalesoffs = (is & 3) * 8;
+
+            const uint scidx0 = (is < 4) ? 0 : 2;
+            const uint scidxshift0 = scalesoffs;
+            const uint scidxshift1 = (is < 4) ? scalesoffs : scalesoffs + 2;
+            const uint mbidx0 = (is < 4) ? 1 : 2;
+            const uint mbidxshift0 = (is < 4) ? scalesoffs : scalesoffs + 4;
+            const uint mbidxshift1 = (is < 4) ? scalesoffs : scalesoffs + 2;
+
+            const uint8_t sc    = uint8_t(((scales[scidx0] >> scidxshift0) & 0xF) | ((scales[0] >> scidxshift1) & 0x30));
+            const uint8_t mbyte = uint8_t(((scales[mbidx0] >> mbidxshift0) & 0xF) | ((scales[1] >> mbidxshift1) & 0x30));
+
+            const float d = loadd.x * sc;
+            const float m = -loadd.y * mbyte;
+
+            const vec4 q = vec4(unpack8((data_a_packed32[ib].qs[qsi / 4] >> (b * 4)) & 0x0F0F0F0F));
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     FLOAT_TYPEV2(fma(d, q.x, m), fma(d, q.y, m)));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2(fma(d, q.z, m), fma(d, q.w, m)));
+#elif defined(DATA_A_Q5_K)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 64;                  // 4 values per idx
+            const uint iqs = (idx % 64) * 2;           // 0,2,4..126
+
+            const uint n = iqs / 32;                   // 0,1,2,3
+            const uint b = (iqs % 32) / 16;            // 0,1
+            const uint is = 2 * n + b;                 // 0..7
+            const uint qsi = n * 32 + (iqs % 16) * 2;  // 0,2,4..126
+            const uint qhi = (iqs % 16) * 2;           // 0,2,4..30
+
+            const vec2 loadd = vec2(data_a[ib].dm);
+
+            const uvec3 scales = uvec3(data_a_packed32[ib].scales[0],
+                                       data_a_packed32[ib].scales[1],
+                                       data_a_packed32[ib].scales[2]);
+            const uint scalesoffs = (is & 3) * 8;
+
+            const uint scidx0 = (is < 4) ? 0 : 2;
+            const uint scidxshift0 = scalesoffs;
+            const uint scidxshift1 = (is < 4) ? scalesoffs : scalesoffs + 2;
+            const uint mbidx0 = (is < 4) ? 1 : 2;
+            const uint mbidxshift0 = (is < 4) ? scalesoffs : scalesoffs + 4;
+            const uint mbidxshift1 = (is < 4) ? scalesoffs : scalesoffs + 2;
+
+            const uint8_t sc    = uint8_t(((scales[scidx0] >> scidxshift0) & 0xF) | ((scales[0] >> scidxshift1) & 0x30));
+            const uint8_t mbyte = uint8_t(((scales[mbidx0] >> mbidxshift0) & 0xF) | ((scales[1] >> mbidxshift1) & 0x30));
+
+            const float d = loadd.x * sc;
+            const float m = -loadd.y * mbyte;
+
+            const uint qs = (data_a_packed32[ib].qs[qsi / 4] >> (b * 4)) & 0x0F0F0F0F;
+            const uint qh = ((data_a_packed32[ib].qh[qhi / 4] >> (iqs / 16)) & 0x01010101) << 4;
+            const vec4 q = vec4(unpack8(qs | qh));
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     FLOAT_TYPEV2(fma(d, q.x, m), fma(d, q.y, m)));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2(fma(d, q.z, m), fma(d, q.w, m)));
+#elif defined(DATA_A_Q6_K)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 128;                  // 2 values per idx
+            const uint iqs = idx % 128;                 // 0..127
+
+            const uint n = iqs / 64;                    // 0,1
+            const uint b = ((iqs % 64) / 32) * 4;       // 0,4
+            const uint is_b = (iqs % 16) / 8;           // 0,1
+            const uint qhshift = ((iqs % 64) / 16) * 2; // 0,2,4,6
+            const uint is = 8 * n + qhshift + is_b;     // 0..15
+            const uint qsi = n * 32 + (iqs % 32);       // 0..63
+            const uint qhi = n * 16 + (iqs % 16);       // 0..31
+
+            const float dscale = float(data_a[ib].d) * float(data_a[ib].scales[is]);
+
+            const uint ql = (uint(data_a_packed16[ib].ql[qsi]) >> b) & 0x0F0F;
+            const uint qh = (uint(data_a_packed16[ib].qh[qhi]) >> qhshift) & 0x0303;
+            const vec2 q = (vec2(unpack8(ql | (qh << 4)).xy) - 32) * dscale;
+
+            store_a(col, row * LOAD_VEC_A / 2, FLOAT_TYPEV2(q.x, q.y));
 #elif defined(DATA_A_IQ1_S)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 32;
     const uint ib32 = (idx % 32) / 4;
@@ -84,14 +364,13 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     const float delta = ((qh & 0x8000) != 0) ? -IQ1S_DELTA : IQ1S_DELTA;
     const int16_t grid = int16_t(iq1s_grid[qs | (bitfieldExtract(qh, 3 * int(ib8 & 3), 3) << 8)]);
 
-    [[unroll]] for (int k = 0; k < 4; ++k) {
-        store_a(col, k_pair + k, FLOAT_TYPEV2(dl * (bitfieldExtract(grid, 4 * k    , 2) + delta),
-                                            dl * (bitfieldExtract(grid, 4 * k + 2, 2) + delta)));
-
-    }
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            [[unroll]] for (int k = 0; k < 4; ++k) {
+                store_a(col, k_pair + k, FLOAT_TYPEV2(dl * (bitfieldExtract(grid, 4 * k    , 2) + delta),
+                                                       dl * (bitfieldExtract(grid, 4 * k + 2, 2) + delta)));
+            }
 #elif defined(DATA_A_IQ1_M)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 32;
     const uint ib8 = idx % 32;
@@ -107,14 +386,13 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     const float delta = ((qh & 8) != 0) ? -IQ1M_DELTA : IQ1M_DELTA;
     const int16_t grid = int16_t(iq1s_grid[qs | ((qh & 7) << 8)]);
 
-    [[unroll]] for (int k = 0; k < 4; ++k) {
-        store_a(col, k_pair + k, FLOAT_TYPEV2(dl * (bitfieldExtract(grid, 4 * k    , 2) + delta),
-                                            dl * (bitfieldExtract(grid, 4 * k + 2, 2) + delta)));
-
-    }
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            [[unroll]] for (int k = 0; k < 4; ++k) {
+                store_a(col, k_pair + k, FLOAT_TYPEV2(dl * (bitfieldExtract(grid, 4 * k    , 2) + delta),
+                                                       dl * (bitfieldExtract(grid, 4 * k + 2, 2) + delta)));
+            }
 #elif defined(DATA_A_IQ2_XXS)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 32;
     const uint ib32 = (idx % 32) / 4;
@@ -147,9 +425,17 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     store_a(col, k_pair + 3, db * FLOAT_TYPEV2((sign &  64) != 0 ? -grid1.z : grid1.z,
                                             (sign & 128) != 0 ? -grid1.w : grid1.w));
 
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     db * FLOAT_TYPEV2((sign &   1) != 0 ? -grid0.x : grid0.x,
+                                                        (sign &   2) != 0 ? -grid0.y : grid0.y));
+            store_a(col, k_pair + 1, db * FLOAT_TYPEV2((sign &   4) != 0 ? -grid0.z : grid0.z,
+                                                        (sign &   8) != 0 ? -grid0.w : grid0.w));
+            store_a(col, k_pair + 2, db * FLOAT_TYPEV2((sign &  16) != 0 ? -grid1.x : grid1.x,
+                                                        (sign &  32) != 0 ? -grid1.y : grid1.y));
+            store_a(col, k_pair + 3, db * FLOAT_TYPEV2((sign &  64) != 0 ? -grid1.z : grid1.z,
+                                                        (sign & 128) != 0 ? -grid1.w : grid1.w));
 #elif defined(DATA_A_IQ2_XS)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 32;
     const uint ib32 = (idx % 32) / 4;
@@ -177,9 +463,17 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     store_a(col, k_pair + 3, db * FLOAT_TYPEV2((sign &  64) != 0 ? -grid1.z : grid1.z,
                                             (sign & 128) != 0 ? -grid1.w : grid1.w));
 
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     db * FLOAT_TYPEV2((sign &   1) != 0 ? -grid0.x : grid0.x,
+                                                        (sign &   2) != 0 ? -grid0.y : grid0.y));
+            store_a(col, k_pair + 1, db * FLOAT_TYPEV2((sign &   4) != 0 ? -grid0.z : grid0.z,
+                                                        (sign &   8) != 0 ? -grid0.w : grid0.w));
+            store_a(col, k_pair + 2, db * FLOAT_TYPEV2((sign &  16) != 0 ? -grid1.x : grid1.x,
+                                                        (sign &  32) != 0 ? -grid1.y : grid1.y));
+            store_a(col, k_pair + 3, db * FLOAT_TYPEV2((sign &  64) != 0 ? -grid1.z : grid1.z,
+                                                        (sign & 128) != 0 ? -grid1.w : grid1.w));
 #elif defined(DATA_A_IQ2_S)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 32;
     const uint ib8 = idx % 32;
@@ -209,9 +503,17 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     store_a(col, k_pair + 3, db * FLOAT_TYPEV2((sign &  64) != 0 ? -grid1.z : grid1.z,
                                             (sign & 128) != 0 ? -grid1.w : grid1.w));
 
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     db * FLOAT_TYPEV2((sign &   1) != 0 ? -grid0.x : grid0.x,
+                                                        (sign &   2) != 0 ? -grid0.y : grid0.y));
+            store_a(col, k_pair + 1, db * FLOAT_TYPEV2((sign &   4) != 0 ? -grid0.z : grid0.z,
+                                                        (sign &   8) != 0 ? -grid0.w : grid0.w));
+            store_a(col, k_pair + 2, db * FLOAT_TYPEV2((sign &  16) != 0 ? -grid1.x : grid1.x,
+                                                        (sign &  32) != 0 ? -grid1.y : grid1.y));
+            store_a(col, k_pair + 3, db * FLOAT_TYPEV2((sign &  64) != 0 ? -grid1.z : grid1.z,
+                                                        (sign & 128) != 0 ? -grid1.w : grid1.w));
 #elif defined(DATA_A_IQ3_XXS)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 64;
     const uint iqs = idx % 64;
@@ -235,9 +537,13 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     store_a(col, k_pair + 1, FLOAT_TYPEV2((sign &   4) != 0 ? -v.z : v.z,
                                         (sign &   8) != 0 ? -v.w : v.w));
 
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     FLOAT_TYPEV2((sign &   1) != 0 ? -v.x : v.x,
+                                                   (sign &   2) != 0 ? -v.y : v.y));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2((sign &   4) != 0 ? -v.z : v.z,
+                                                   (sign &   8) != 0 ? -v.w : v.w));
 #elif defined(DATA_A_IQ3_S)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 64;
     const uint iqs = idx % 64;
@@ -259,9 +565,13 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     store_a(col, k_pair + 1, FLOAT_TYPEV2((sign &   4) != 0 ? -v.z : v.z,
                                         (sign &   8) != 0 ? -v.w : v.w));
 
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     FLOAT_TYPEV2((sign &   1) != 0 ? -v.x : v.x,
+                                                   (sign &   2) != 0 ? -v.y : v.y));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2((sign &   4) != 0 ? -v.z : v.z,
+                                                   (sign &   8) != 0 ? -v.w : v.w));
 #elif defined(DATA_A_IQ4_XS)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 64;
     const uint ib32 = (idx % 64) / 8;
@@ -275,11 +585,11 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     const float d = float(data_a[ib].d);
     const vec4 v = d * float(int(sl | (sh << 4)) - 32) * vec4(kvalues_iq4nl[qs.x], kvalues_iq4nl[qs.y], kvalues_iq4nl[qs.z], kvalues_iq4nl[qs.w]);
 
-    store_a(col, k_pair, FLOAT_TYPEV2(v.xy));
-    store_a(col, k_pair + 1, FLOAT_TYPEV2(v.zw));
+            const uint k_pair = row * LOAD_VEC_A / 2;
+            store_a(col, k_pair,     FLOAT_TYPEV2(v.xy));
+            store_a(col, k_pair + 1, FLOAT_TYPEV2(v.zw));
 #elif defined(DATA_A_IQ4_NL)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 4;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 8;
     const uint iqs = idx & 0x07;
@@ -293,9 +603,13 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     store_a(col, k_pair + 8, d * FLOAT_TYPEV2(kvalues_iq4nl[bitfieldExtract(vui, 4, 4)],
                                             kvalues_iq4nl[vui >> 12]));
 
+            const uint k_pair = row * LOAD_VEC_A / 4;
+            store_a(col, k_pair,     d * FLOAT_TYPEV2(kvalues_iq4nl[vui & 0xF],
+                                                       kvalues_iq4nl[bitfieldExtract(vui, 8, 4)]));
+            store_a(col, k_pair + 8, d * FLOAT_TYPEV2(kvalues_iq4nl[bitfieldExtract(vui, 4, 4)],
+                                                       kvalues_iq4nl[vui >> 12]));
 #elif defined(DATA_A_MXFP4)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint k_pair = row * LOAD_VEC_A / 4;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 
     const uint ib = idx / 8;
     const uint iqs = (idx & 0x07) * 2;
@@ -304,40 +618,39 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     const uint vui2 = uint(data_a[ib].qs[iqs+1]);
 
 #ifdef USE_OCP_FP4
-    const float d = e8m0_to_fp32(data_a[ib].e);
-    const u8vec2 packed = u8vec2(vui, vui2);
-    store_a(col, k_pair, FLOAT_TYPEV2(bitcastExtractfe2m1EXT(packed, 0u)) * FLOAT_TYPE(d));
-    store_a(col, k_pair + 8, FLOAT_TYPEV2(bitcastExtractfe2m1EXT(packed, 4u)) * FLOAT_TYPE(d));
+            const float d = e8m0_to_fp32(data_a[ib].e);
+            const u8vec2 packed = u8vec2(vui, vui2);
+            store_a(col, row,     FLOAT_TYPEV2(bitcastExtractfe2m1EXT(packed, 0u)) * FLOAT_TYPE(d));
+            store_a(col, row + 8, FLOAT_TYPEV2(bitcastExtractfe2m1EXT(packed, 4u)) * FLOAT_TYPE(d));
 #else
-    const float d = e8m0_to_fp32(data_a[ib].e) * 0.5;
-    store_a(col, k_pair, FLOAT_TYPEV2(kvalues_mxfp4[vui  & 0xF] * d,
-                                        kvalues_mxfp4[vui2 & 0xF] * d));
-
-    store_a(col, k_pair + 8, FLOAT_TYPEV2(kvalues_mxfp4[vui  >>  4] * d,
-                                        kvalues_mxfp4[vui2 >>  4] * d));
-
+            const float d = e8m0_to_fp32(data_a[ib].e) * 0.5;
+            store_a(col, row,     FLOAT_TYPEV2(kvalues_mxfp4[vui  & 0xF] * d,
+                                              kvalues_mxfp4[vui2 & 0xF] * d));
+            store_a(col, row + 8, FLOAT_TYPEV2(kvalues_mxfp4[vui  >>  4] * d,
+                                              kvalues_mxfp4[vui2 >>  4] * d));
 #endif
 #elif defined(DATA_A_NVFP4)
-    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
-    const uint eff_row = (row & 3) + (row & ~3) * 2;
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+            const uint ib = idx / 16u;
+            const uint sub = (idx & 0xC) >> 2;
+            const uint iqs = (idx & 0xF) * 2;
+            const uint vui = uint(data_a[ib].qs[iqs]);
+            const uint vui2 = uint(data_a[ib].qs[iqs+1]);
 
-    const uint ib = idx / 16u;
-    const uint sub = (idx & 0xC) >> 2;
-    const uint iqs = (idx & 0xF) * 2;
-    const uint vui = uint(data_a[ib].qs[iqs]);
-    const uint vui2 = uint(data_a[ib].qs[iqs+1]);
-
+            // lo and hi nibbles are 8 elements apart, which doesn't quite line up with
+            // how the thread mapping and buf_idx calculation works for other types.
+            const uint eff_row = (row & 3) + (row & ~3) * 2;
 #ifdef USE_OCP_FP4
-    const FLOAT_TYPE d = FLOAT_TYPE(ue4m3_from_bits(data_a[ib].d[sub]));
-    const u8vec2 packed = u8vec2(vui, vui2);
-    store_a(col, eff_row,     FLOAT_TYPEV2(bitcastExtractfe2m1EXT(packed, 0u)) * d);
-    store_a(col, eff_row + 4, FLOAT_TYPEV2(bitcastExtractfe2m1EXT(packed, 4u)) * d);
+            const FLOAT_TYPE d = FLOAT_TYPE(ue4m3_from_bits(data_a[ib].d[sub]));
+            const u8vec2 packed = u8vec2(vui, vui2);
+            store_a(col, eff_row,     FLOAT_TYPEV2(bitcastExtractfe2m1EXT(packed, 0u)) * d);
+            store_a(col, eff_row + 4, FLOAT_TYPEV2(bitcastExtractfe2m1EXT(packed, 4u)) * d);
 #else
-    const float d = ue4m3_to_fp32(data_a[ib].d[sub]) * 0.5;
-    store_a(col, eff_row,     FLOAT_TYPEV2(kvalues_mxfp4[vui  & 0xF] * d,
-                                            kvalues_mxfp4[vui2 & 0xF] * d));
-    store_a(col, eff_row + 4, FLOAT_TYPEV2(kvalues_mxfp4[vui  >>  4] * d,
-                                            kvalues_mxfp4[vui2 >>  4] * d));
+            const float d = ue4m3_to_fp32(data_a[ib].d[sub]) * 0.5;
+            store_a(col, eff_row,     FLOAT_TYPEV2(kvalues_mxfp4[vui  & 0xF] * d,
+                                                    kvalues_mxfp4[vui2 & 0xF] * d));
+            store_a(col, eff_row + 4, FLOAT_TYPEV2(kvalues_mxfp4[vui  >>  4] * d,
+                                                    kvalues_mxfp4[vui2 >>  4] * d));
 #endif
 #else
     if (MmTypeA == GGML_TYPE_Q4_0) {
