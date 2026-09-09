@@ -796,8 +796,6 @@ struct mtmd_helper_video {
             mtmd_bitmap_set_id(frame, frame_id.c_str());
         }
         current_frame++;
-        mtmd_bitmap * frame = mtmd_bitmap_init(info.width, info.height, frame_buf.data());
-        mtmd_bitmap_set_mergeable(frame, true);
         return frame;
     }
 
