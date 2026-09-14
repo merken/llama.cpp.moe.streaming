@@ -1254,8 +1254,10 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
 
                 dev->props.use_shared_buffers = dev->props.has_unified_memory;
 #if TARGET_OS_OSX
-                // In case of eGPU, shared memory may be preferable.
+#if TARGET_CPU_X86_64
+   // In case of eGPU, shared memory may be preferable.
                 dev->props.use_shared_buffers |= [dev->mtl_device location] == MTLDeviceLocationExternal;
+#endif
 #endif
                 if (getenv("GGML_METAL_SHARED_BUFFERS_DISABLE") != NULL) {
                     dev->props.use_shared_buffers = false;
@@ -1320,13 +1322,23 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
                         }
                     }
 
+                    for (int i = MTLGPUFamilyApple1 + 20; i >= MTLGPUFamilyApple1; --i) {
+                        if ([dev->mtl_device supportsFamily:i]) {
+                            dev->props.gpu_family = i - (int) MTLGPUFamilyApple1 + 1;
+                            GGML_LOG_INFO("%s: GPU family: MTLGPUFamilyApple%d  (%d)\n", __func__, dev->props.gpu_family, i);
+                            break;
+                        }
+                    }
+#if TARGET_OS_OSX
+#if TARGET_CPU_X86_64
                     for (int i = MTLGPUFamilyCommon1 + 5; i >= MTLGPUFamilyCommon1; --i) {
                         if ([dev->mtl_device supportsFamily:i]) {
                             GGML_LOG_INFO("%s: GPU family: MTLGPUFamilyCommon%d (%d)\n", __func__, i - (int) MTLGPUFamilyCommon1 + 1, i);
                             break;
                         }
                     }
-
+#endif
+#endif
                     for (int i = MTLGPUFamilyMetal3_GGML + 5; i >= MTLGPUFamilyMetal3_GGML; --i) {
                         if ([dev->mtl_device supportsFamily:i]) {
                             GGML_LOG_INFO("%s: GPU family: MTLGPUFamilyMetal%d  (%d)\n", __func__, i - (int) MTLGPUFamilyMetal3_GGML + 3, i);
